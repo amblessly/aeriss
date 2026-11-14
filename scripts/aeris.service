@@ -1,0 +1,25 @@
+[Unit]
+Description=AERIS Local Server (Raspberry Pi 4B Ground Station)
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i_user%
+WorkingDirectory=%i_workdir%
+# Optional protected deployment config (root-owned, e.g. /etc/aeris/aeris.env)
+# May define: AERIS_HOTSPOT_SSID, AERIS_HOTSPOT_IP, AERIS_HOTSPOT_PASSWORD, AERIS_HOST/PORT, hardware settings
+EnvironmentFile=-/etc/aeris/aeris.env
+EnvironmentFile=-%i_workdir%/config/aeris.env
+Environment=AERIS_HOST=0.0.0.0
+Environment=AERIS_PORT=5000
+# Adjust to your virtualenv python if used:
+ExecStart=%i_python% -m app.main
+Restart=always
+RestartSec=5
+# Ensure logs dir exists and is writable
+StandardOutput=append:%i_workdir%/logs/aeris.service.log
+StandardError=append:%i_workdir%/logs/aeris.service.err.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+# AERIS Raspberry Pi 4B runtime dependencies
+# Core web/runtime
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+
+# Storage/utilities
+numpy>=1.26.0
+
+# Hardware (install on Raspberry Pi as needed; imports are guarded at runtime)
+# MLX90640 options (one of these stacks is typically used):
+# adafruit-circuitpython-mlx90640
+# adafruit-blinka
+# smbus2
+# or mlx90640 (pip package variant)
+
+# LoRa SX127x over SPI/GPIO (Raspberry Pi):
+# spidev
+# RPi.GPIO
+
+# Optional: thermal/image helpers if extended later
+# pillow
