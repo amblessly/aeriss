@@ -18,5 +18,9 @@ numpy>=1.26.0
 # spidev
 # RPi.GPIO
 
+# Optional: serial GNSS/GPS receiver (e.g. u-blox USB dongle on the Pi) for genuine
+# offline satellite positioning (read-only NMEA 0183). Required only if you attach one.
+# pyserial>=3.5
+
 # Optional: thermal/image helpers if extended later
 # pillow

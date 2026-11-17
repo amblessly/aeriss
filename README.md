@@ -79,14 +79,19 @@ These paths are separate: **LoRa is not required for laptop access to the locall
 ## Offline live GPS street map (implemented, offline-first)
 
 ### Architecture (local/offline)
-- **Map rendering:** Leaflet (bundled locally via project dependencies/build; local vendor assets also stored in `website/public/vendor/leaflet/`). **No external CDN, no online tile fallback.**
-- **Map style:** **Street map only** (satellite/hybrid/terrain removed).
+- **Map rendering:** MapLibre GL JS (bundled npm dependency; built into `website/dist/assets/`). **No external CDN, no online tile fallback.**
+- **Map style:** custom street-only style (`website/public/map/style.json`); no external style/font URLs, no remote glyphs, no sprite dependencies (text-only labels/POIs).
 - **Map data storage (local):**
-  - MBTiles: `data/maps/streets.mbtiles` (default, configurable via `AERIS_MAP_MBTILES_PATH`)
-  - or XYZ tiles: `data/maps/tiles/{z}/{x}/{y}.png|jpg|webp` (configurable via `AERIS_MAP_TILES_DIR`)
-- **Tile serving:** local backend endpoint `GET /api/map/tiles/{z}/{x}/{y}.png` (serves only local MBTiles/XYZ; returns 404 JSON when unavailable). Map status/config: `GET /api/map/status`.
-- **Attribution:** OpenStreetMap attribution supported/configurable (`AERIS_MAP_ATTRIBUTION`). Use appropriate attribution for the dataset you load.
-- **Coverage:** configurable/preloaded geographic area and zoom range only (no automatic worldwide download). Locations outside preloaded coverage may have no street details; GPS coordinates may still be available from the device/browser.
+  - PMTiles v3 vector archive: `data/maps/aeris-hq.pmtiles` (operational high-zoom archive, z0–16 — **primary**; env override `AERIS_MAP_PMTILES_HQ_PATH`) — plus `data/maps/aeris.pmtiles` (nationwide z0–15 — **fallback**, untouched; `AERIS_MAP_PMTILES_PATH`)
+  - Local glyph PBFs: `data/maps/fonts/{fontstack}/{range}.pbf` (default, configurable via `AERIS_MAP_FONTS_DIR`)
+- **Backend endpoints (FastAPI):**
+  - `GET /api/map/aeris.pmtiles` — streams the archive with HTTP Range support (206 Partial Content, `Accept-Ranges: bytes`), chunked file streaming (no full-archive memory load).
+  - `GET /api/map/style.json` — serves the map style (single source: `website/public/map/style.json`).
+  - `GET /api/map/fonts/{fontstack}/{range}.pbf` — serves local glyphs (path-traversal guarded).
+  - `GET /api/map/status` — readiness/bounds/zoom/attribution for the UI (parses only the 127-byte PMTiles header).
+- **Attribution:** OpenStreetMap attribution supported/configurable (`AERIS_MAP_ATTRIBUTION`). Data © OpenStreetMap contributors (ODbL).
+- **Coverage:** **Maragondon/Cavite operational bbox** at zooms **0–16** via `aeris-hq.pmtiles` (genuine z16 street-level detail, ~7 MB); falls back automatically to the **nationwide z0–15** archive (`aeris.pmtiles`) if the HQ archive is missing/invalid: **entire Philippines** (Luzon, Metro Manila, Visayas, Mindanao, Palawan). `/api/map/status` reports `map_source` / `highzoom_available`. The camera `maxZoom` follows the *effective* archive (z16 HQ / z15 fallback). No overzoom past the effective archive's own max zoom.
+- **Map data:** generated from the Geofabrik Philippines OSM extract using Planetiler (OpenMapTiles schema). See `data/maps/README.md` for regeneration steps.
 
 ### Live GPS location (browser-based, real data only)
 - Uses `navigator.geolocation.watchPosition()` when the user starts location tracking.
@@ -96,11 +101,29 @@ These paths are separate: **LoRa is not required for laptop access to the locall
 - **Permissions:** requested on user action; supports browser persistent Allow where available (do not repeatedly prompt after granted). Permission denial/errors/timeouts/unavailable states handled with meaningful messages.
 - **Location source:** actual browser/device location provider only (never fabricated). Raspberry Pi 4B has no built-in GPS; laptop browser geolocation uses laptop location services. Separate device GPS receiver integration on RPi backend can be added for device-native location (not claimed/tested here).
 
+### Mission Map laptop geolocation (browser-based, real data only)
+- The **Mission Map** card has a **"LAPTOP LOCATION"** control (top-right). It uses the browser Geolocation API (`getCurrentPosition`/`watchPosition`/`clearWatch`) with `enableHighAccuracy: true`. Laptop coordinates never overwrite the AERIS hardware/telemetry GPS (`useAppStore.uav`) — separate sources by design.
+- **Enable** starts tracking: browser permission is requested on first use; on grant, the marker + accuracy ring update live; the map flies to the fix once per enable (it never yanks the map during manual panning).
+- **Disable** stops the watcher and keeps the last saved coordinates; pressing Enable resumes it.
+- **Persistence:** the last fix and the tracking-enabled flag persist in `localStorage` (`aeris-laptop-location-v1`). On refresh, the marker is restored; tracking auto-resumes **only** if previously enabled **and** the browser still grants permission — never otherwise. Persisted permission is not assumed; the Permissions API is queried on load.
+- **Displayed data:** latitude/longitude, accuracy (m), last update time, permission state (Granted/Denied/Prompt), acquisition status (Tracking active/Requesting/Waiting/Disabled/etc.).
+- **Marker:** green teardrop map pin + accuracy ring for live fixes — same visual language as the rest of the dashboard.
+- **Live vs last-known:** the UI never presents a stale fix as live. A fresh validated fix renders the green pin with a `LIVE — <provider>` chip (e.g. `LIVE — USB GNSS (NMEA) · /dev/ttyUSB0 · 9 sats` or `LIVE — Browser geolocation`). When no fresh fix is available (position error, timeout, or ageing out), the persisted last-known fix stays on the map as a dimmed amber dashed pin with an explicit `LAST KNOWN POSITION` banner (fix time + provider). On refresh, the persisted last fix is likewise shown only as labeled last-known. Live fixes age out to last-known after 60 s (browser) / `AERIS_GPS_FRESH_S` (USB GNSS).
+
+### Offline positioning (USB/serial GNSS — NMEA 0183) — new
+- **Hardware reality:** browser geolocation can only return a fix when the OS has a location source. The development laptop (Intel Gemini Lake, Intel CNVi WiFi, no GNSS receiver, no modem) has **no offline-capable positioning source**: GeoClue has no GPS/NMEA/modem hardware to query, and its WiFi positioning endpoint answers `Not Found` even *with* internet. On such hardware, "offline location" via the browser is impossible no matter how the app is configured.
+- **Genuine offline source (supported):** attach a USB/serial GNSS receiver (e.g. u-blox dongle) to the AERIS Raspberry Pi. The local backend reads NMEA sentences (`app/services/nmea.py`, pure parser; `app/services/gps_source.py`, read-only serial reader, auto-probes `/dev/serial/by-id/*gps*|gnss*`, `/dev/ttyUSB*`, `/dev/ttyACM*`, `/dev/ttyS0`) and serves the latest fix at `GET /api/location/local`. No internet, IP geolocation, or cloud API is involved — the receiver computes position from satellites.
+- **Enable it:** the AERIS host must see the receiver as a serial device; install `pyserial` on the Pi (`pip install pyserial`, kept as a commented optional dependency in `requirements.txt`). Envs: `AERIS_GPS_ENABLED=auto|on|off`, `AERIS_GPS_PORT=/dev/ttyUSB0` (explicit override; otherwise auto-probe), `AERIS_GPS_BAUD=9600` (NMEA default), `AERIS_GPS_FRESH_S=10` (freshness window), `AERIS_GPS_STALE_S=60`. The reader sends nothing to the receiver. If no receiver is attached, the endpoint reports `available: false` with a machine-readable `reason` (e.g. `no_candidate_port`, `open_failed:...`, `pyserial_not_installed`) and `fix: null` — it never invents coordinates.
+- **Client behavior:** the dashboard polls `/api/location/local` while tracking is enabled; a fresh USB GNSS fix outranks the browser's (often coarse) position. Browser geolocation is still used as delivered above, and remains the source when no local receiver is available.
+- **Map zoom:** the MapLibre camera is capped at the effective archive's real zoom ceiling (`maxZoom` from `/api/map/status` on both map views — z16 operational HQ archive / z15 nationwide fallback; `source maxzoom` in `website/public/map/style.json` is set to 16 for HQ, and MapLibre takes TileJSON override from the archive header for the fallback). Wheel, trackpad pinch (ctrl+wheel), pinch touch, double-click, keyboard, on-screen +/- and fly-to all resolve to that ceiling at most. z16 vector tiles exist in the HQ archive for the Maragondon bbox (verified for tile z16/x54748/y30136). No overzoom past the ceiling. **z17 is not available** — Planetiler's OpenMapTiles profile hard-caps at z16 (`Max zoom must be <= 16`); no z17 tiles are generated and none are faked.
+
 ### Secure context (HTTPS) for browser geolocation
-- Browser geolocation requires a secure context. Plain HTTP over ordinary LAN IP may not allow geolocation.
-- Backend supports HTTPS when configured: set `AERIS_SSL_CERTFILE` and `AERIS_SSL_KEYFILE` (uvicorn SSL). Helper script: `scripts/generate_local_https_cert.sh`.
-- For LAN access, use a certificate trusted by the client browser/OS (self-signed must be explicitly trusted/imported; local PKI/mkcert may be used as appropriate). Users can grant persistent location permission via browser site settings (lock/info icon → Location → Allow) after trust/permission setup.
-- The UI reports secure-context/permission/location errors; it does not bypass browser restrictions.
+- Browser geolocation requires a secure context. Plain HTTP over the Pi's LAN IP (e.g. `http://192.168.4.1:5000` from the AERIS hotspot) is **not** a secure context in Chromium-class browsers — geolocation will be blocked. `http://localhost:5000` / `http://127.0.0.1:5000` on the Pi's own machine *is* a secure context.
+- **Recommended fix:** serve the dashboard over HTTPS with a certificate the client laptop trusts.
+  - Quick path: `bash scripts/generate_local_https_cert.sh config/certs 192.168.4.1 825`, then start AERIS with `AERIS_SSL_CERTFILE=config/certs/aeris-local.cert.pem AERIS_SSL_KEYFILE=config/certs/aeris-local.key.pem` and import/trust the cert in the client browser (site settings → trust / install to OS).
+  - Robust path: `mkcert` local CA (or local PKI) — install the CA once on each field laptop, then `https://192.168.4.1:5000` works with no warnings and no per-site clicks.
+- Do not use browser flag bypasses for field deployments (insecure; the flag is ignored on some browsers / enterprise builds).
+- The UI reports secure-context/permission/location errors; it does not bypass browser restrictions. The map, PMTiles rendering, hotspot, and dashboard remain fully functional offline regardless — only browser geolocation needs the secure context.
 
 ### Dashboard UI (Map page/panel)
 - Street map only (no satellite/hybrid/terrain/layer switcher), center-on-location, recenter, zoom controls, and status/info panel.
@@ -109,14 +132,14 @@ These paths are separate: **LoRa is not required for laptop access to the locall
 - Statuses reflect actual state (not forced to Connected/Active). Design kept consistent with existing AERIS dashboard; unrelated features preserved. Thermal Feed and other dashboard sections not modified for this work.
 
 ### Map configuration (env/config)
-- `AERIS_MAP_DATA_DIR`, `AERIS_MAP_TILES_DIR`, `AERIS_MAP_MBTILES_PATH`
+- `AERIS_MAP_DATA_DIR`, `AERIS_MAP_PMTILES_PATH`, `AERIS_MAP_FONTS_DIR`
 - `AERIS_MAP_ATTRIBUTION`, `AERIS_MAP_MIN_ZOOM`, `AERIS_MAP_MAX_ZOOM`, `AERIS_MAP_DEFAULT_ZOOM`
 - `AERIS_MAP_DEFAULT_LAT`, `AERIS_MAP_DEFAULT_LNG`
 - `AERIS_SSL_CERTFILE`, `AERIS_SSL_KEYFILE`
 
 ## Installation and startup (Raspberry Pi 4B) — updated notes
 - Build website (`npm ci && npm run build` in `website/`) so backend serves local frontend/assets.
-- Place offline street map data on the Pi (`data/maps/streets.mbtiles` or `data/maps/tiles/...`) for the required coverage/zoom levels.
+- Place offline map data on the Pi (`data/maps/aeris-hq.pmtiles` for the Maragondon z0–16 operational area, optionally `data/maps/aeris.pmtiles` as nationwide z0–15 fallback, + `data/maps/fonts/…`) (see `data/maps/README.md`).
 - (Recommended for geolocation) configure HTTPS cert/key and start with SSL env vars set; trust cert on client laptop and access via `https://<pi-ip>:5000`.
 - Start backend: `python -m app.main` (or systemd via `scripts/install_services.sh`), bind as configured (`AERIS_HOST`/`AERIS_PORT`).
 - Laptop access: connect to AERIS hotspot/network, open dashboard URL (HTTP for UI access where available; **HTTPS/secure context required for browser geolocation**), start location tracking, allow permission. 

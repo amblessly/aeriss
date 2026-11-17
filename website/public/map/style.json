@@ -1,0 +1,829 @@
+{
+  "version": 8,
+  "name": "AERIS Offline Street Map",
+  "metadata": {
+    "aeris:generator": "Planetiler (OpenMapTiles schema) from OpenStreetMap data",
+    "aeris:offline": true
+  },
+  "glyphs": "/api/map/fonts/{fontstack}/{range}.pbf",
+  "sources": {
+    "aeris": {
+      "type": "vector",
+      "url": "pmtiles:///api/map/aeris.pmtiles",
+      "attribution": "© OpenMapTiles © OpenStreetMap contributors",
+      "minzoom": 0,
+      "maxzoom": 16
+    }
+  },
+  "layers": [
+    {
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#eef1f4"
+      }
+    },
+    {
+      "id": "landcover-wood",
+      "type": "fill",
+      "source": "aeris",
+      "source-layer": "landcover",
+      "minzoom": 7,
+      "filter": [
+        "in",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "literal",
+          [
+            "wood",
+            "forest",
+            "jungle"
+          ]
+        ]
+      ],
+      "paint": {
+        "fill-color": "#dcead8",
+        "fill-opacity": 0.9
+      }
+    },
+    {
+      "id": "landcover-grass",
+      "type": "fill",
+      "source": "aeris",
+      "source-layer": "landcover",
+      "minzoom": 10,
+      "filter": [
+        "in",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "literal",
+          [
+            "grass",
+            "meadow",
+            "heath",
+            "scrub"
+          ]
+        ]
+      ],
+      "paint": {
+        "fill-color": "#e3eddd",
+        "fill-opacity": 0.9
+      }
+    },
+    {
+      "id": "park",
+      "type": "fill",
+      "source": "aeris",
+      "source-layer": "park",
+      "minzoom": 11,
+      "paint": {
+        "fill-color": "#d4e8cf",
+        "fill-opacity": 0.95
+      }
+    },
+    {
+      "id": "landuse-residential",
+      "type": "fill",
+      "source": "aeris",
+      "source-layer": "landuse",
+      "minzoom": 11,
+      "filter": [
+        "in",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "literal",
+          [
+            "residential",
+            "suburb",
+            "neighbourhood"
+          ]
+        ]
+      ],
+      "paint": {
+        "fill-color": "#e8e6e1",
+        "fill-opacity": 0.8
+      }
+    },
+    {
+      "id": "landuse-industrial",
+      "type": "fill",
+      "source": "aeris",
+      "source-layer": "landuse",
+      "minzoom": 12,
+      "filter": [
+        "in",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "literal",
+          [
+            "industrial",
+            "commercial",
+            "retail"
+          ]
+        ]
+      ],
+      "paint": {
+        "fill-color": "#e4ded9",
+        "fill-opacity": 0.8
+      }
+    },
+    {
+      "id": "water",
+      "type": "fill",
+      "source": "aeris",
+      "source-layer": "water",
+      "paint": {
+        "fill-color": "#a9cde3",
+        "fill-opacity": 1
+      }
+    },
+    {
+      "id": "waterway",
+      "type": "line",
+      "source": "aeris",
+      "source-layer": "waterway",
+      "minzoom": 10,
+      "paint": {
+        "line-color": "#a9cde3",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          10,
+          0.6,
+          14,
+          2.4
+        ]
+      }
+    },
+    {
+      "id": "boundary-admin",
+      "type": "line",
+      "source": "aeris",
+      "source-layer": "boundary",
+      "filter": [
+        "all",
+        [
+          "<=",
+          [
+            "get",
+            "admin_level"
+          ],
+          4
+        ],
+        [
+          "!=",
+          [
+            "get",
+            "maritime"
+          ],
+          1
+        ],
+        [
+          "!=",
+          [
+            "get",
+            "disputed"
+          ],
+          1
+        ]
+      ],
+      "paint": {
+        "line-color": "#b9b3ab",
+        "line-dasharray": [
+          4,
+          2
+        ],
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          5,
+          0.6,
+          12,
+          1.6
+        ],
+        "line-opacity": 0.9
+      }
+    },
+    {
+      "id": "road-casing",
+      "type": "line",
+      "source": "aeris",
+      "source-layer": "transportation",
+      "layout": {
+        "line-join": "round",
+        "line-cap": "round"
+      },
+      "filter": [
+        "!",
+        [
+          "in",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "literal",
+            [
+              "rail",
+              "transit",
+              "ferry",
+              "aerialway",
+              "aeroway"
+            ]
+          ]
+        ]
+      ],
+      "paint": {
+        "line-color": "#b7bec7",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          5,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            [
+              "motorway",
+              "trunk"
+            ],
+            1.8,
+            [
+              "primary"
+            ],
+            1.4,
+            0.5
+          ],
+          11,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            [
+              "motorway",
+              "trunk"
+            ],
+            5.5,
+            [
+              "primary"
+            ],
+            4.5,
+            [
+              "secondary"
+            ],
+            3.6,
+            [
+              "tertiary"
+            ],
+            3.0,
+            1.6
+          ],
+          15,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            [
+              "motorway",
+              "trunk"
+            ],
+            11.0,
+            [
+              "primary"
+            ],
+            9.5,
+            [
+              "secondary"
+            ],
+            8.0,
+            [
+              "tertiary"
+            ],
+            6.5,
+            [
+              "minor"
+            ],
+            5.0,
+            [
+              "service",
+              "track",
+              "path",
+              "pedestrian"
+            ],
+            3.2,
+            2.0
+          ]
+        ],
+        "line-opacity": 0.9
+      }
+    },
+    {
+      "id": "road-fill",
+      "type": "line",
+      "source": "aeris",
+      "source-layer": "transportation",
+      "layout": {
+        "line-join": "round",
+        "line-cap": "round"
+      },
+      "filter": [
+        "!",
+        [
+          "in",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "literal",
+            [
+              "rail",
+              "transit",
+              "ferry",
+              "aerialway",
+              "aeroway"
+            ]
+          ]
+        ]
+      ],
+      "paint": {
+        "line-color": [
+          "match",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "motorway",
+            "trunk"
+          ],
+          "#f7c873",
+          [
+            "primary"
+          ],
+          "#fbd9a0",
+          "#ffffff"
+        ],
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          5,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            [
+              "motorway",
+              "trunk"
+            ],
+            1.0,
+            [
+              "primary"
+            ],
+            0.8,
+            0.2
+          ],
+          11,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            [
+              "motorway",
+              "trunk"
+            ],
+            3.8,
+            [
+              "primary"
+            ],
+            3.0,
+            [
+              "secondary"
+            ],
+            2.4,
+            [
+              "tertiary"
+            ],
+            2.0,
+            0.8
+          ],
+          15,
+          [
+            "match",
+            [
+              "get",
+              "class"
+            ],
+            [
+              "motorway",
+              "trunk"
+            ],
+            8.4,
+            [
+              "primary"
+            ],
+            7.0,
+            [
+              "secondary"
+            ],
+            5.8,
+            [
+              "tertiary"
+            ],
+            4.6,
+            [
+              "minor"
+            ],
+            3.6,
+            [
+              "service",
+              "track",
+              "path",
+              "pedestrian"
+            ],
+            2.2,
+            1.2
+          ]
+        ]
+      }
+    },
+    {
+      "id": "building",
+      "type": "fill",
+      "source": "aeris",
+      "source-layer": "building",
+      "minzoom": 14,
+      "paint": {
+        "fill-color": "#ddd8d0",
+        "fill-outline-color": "#c9c4bb",
+        "fill-opacity": 0.95
+      }
+    },
+    {
+      "id": "road-label",
+      "type": "symbol",
+      "source": "aeris",
+      "source-layer": "transportation_name",
+      "minzoom": 13,
+      "layout": {
+        "symbol-placement": "line",
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          13,
+          10.5,
+          15,
+          12
+        ],
+        "text-letter-spacing": 0.02,
+        "text-max-angle": 30,
+        "text-padding": 2
+      },
+      "paint": {
+        "text-color": "#46525f",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.4
+      }
+    },
+    {
+      "id": "place-hamlet",
+      "type": "symbol",
+      "source": "aeris",
+      "source-layer": "place",
+      "minzoom": 12,
+      "filter": [
+        "in",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "literal",
+          [
+            "hamlet",
+            "neighbourhood",
+            "suburb",
+            "quarter"
+          ]
+        ]
+      ],
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Italic"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          12,
+          10,
+          15,
+          12
+        ]
+      },
+      "paint": {
+        "text-color": "#55606c",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.3
+      }
+    },
+    {
+      "id": "place-village",
+      "type": "symbol",
+      "source": "aeris",
+      "source-layer": "place",
+      "minzoom": 9,
+      "filter": [
+        "in",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "literal",
+          [
+            "village"
+          ]
+        ]
+      ],
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Medium"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          9,
+          10.5,
+          15,
+          13
+        ]
+      },
+      "paint": {
+        "text-color": "#3d4754",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.4
+      }
+    },
+    {
+      "id": "place-town",
+      "type": "symbol",
+      "source": "aeris",
+      "source-layer": "place",
+      "minzoom": 6,
+      "filter": [
+        "in",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "literal",
+          [
+            "town"
+          ]
+        ]
+      ],
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Medium"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          6,
+          11.5,
+          15,
+          15
+        ]
+      },
+      "paint": {
+        "text-color": "#2f3947",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.5
+      }
+    },
+    {
+      "id": "place-city",
+      "type": "symbol",
+      "source": "aeris",
+      "source-layer": "place",
+      "minzoom": 4,
+      "filter": [
+        "in",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "literal",
+          [
+            "city"
+          ]
+        ]
+      ],
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Medium"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          4,
+          13,
+          15,
+          17
+        ]
+      },
+      "paint": {
+        "text-color": "#212b38",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.6
+      }
+    },
+    {
+      "id": "poi",
+      "type": "symbol",
+      "source": "aeris",
+      "source-layer": "poi",
+      "minzoom": 14,
+      "filter": [
+        "any",
+        [
+          "<=",
+          [
+            "get",
+            "rank"
+          ],
+          4
+        ],
+        [
+          "in",
+          [
+            "get",
+            "class"
+          ],
+          [
+            "literal",
+            [
+              "hospital",
+              "clinic",
+              "school",
+              "town_hall",
+              "police",
+              "fire_station",
+              "place_of_worship",
+              "pharmacy"
+            ]
+          ]
+        ]
+      ],
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": 10
+      },
+      "paint": {
+        "text-color": "#5b6673",
+        "text-halo-color": "#ffffff",
+        "text-halo-width": 1.2
+      }
+    }
+  ]
+}

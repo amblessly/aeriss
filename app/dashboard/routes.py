@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import (
@@ -20,20 +20,21 @@ from app.config import (
     HOTSPOT_IP,
     HOTSPOT_SSID,
     MAP_ATTRIBUTION,
-    MAP_DATA_DIR,
     MAP_DEFAULT_LAT,
     MAP_DEFAULT_LNG,
     MAP_DEFAULT_ZOOM,
+    MAP_FONTS_DIR,
     MAP_MAX_ZOOM,
-    MAP_MBTILES_PATH,
     MAP_MIN_ZOOM,
-    MAP_TILES_DIR,
+    MAP_PMTILES_HQ_PATH,
+    MAP_PMTILES_PATH,
     PORT,
     SSL_CERTFILE,
     SSL_KEYFILE,
     WEBSITE_DIR,
 )
 from app.services.data_manager import DataManager
+from app.services.gps_source import gps_status, start_gps_source
 
 manager = DataManager()
 
@@ -121,6 +122,8 @@ async def on_startup() -> None:
     loop = asyncio.get_running_loop()
     manager.set_loop(loop)
     manager.start()
+    # Bring up the local serial GNSS reader (no-op unless a receiver is attached).
+    start_gps_source()
 
 
 @app.on_event("shutdown")
@@ -131,6 +134,19 @@ async def on_shutdown() -> None:
 @app.get("/api/status")
 async def api_status() -> dict[str, Any]:
     return manager.get_state()
+
+
+@app.get("/api/location/local")
+async def api_location_local() -> dict[str, Any]:
+    """Latest fix from the local serial GNSS receiver (USB GPS/gnss dongle, NMEA 0183).
+
+    Fully offline: coordinates come from satellite fixes computed by the receiver,
+    never from internet/IP geolocation or cloud APIs. `fix` is null until a real,
+    valid fix has been received; `fresh` is false once the fix is older than the
+    configured freshness window. Use the coordinates only as a live position when
+    `fresh` is true; otherwise they are a clearly-labeled last-known position.
+    """
+    return gps_status()
 
 
 @app.get("/api/system")
@@ -260,134 +276,188 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await manager.unsubscribe(q)
 
 
+def _pmtiles_header(path: Path | None = None) -> dict[str, Any] | None:
+    """Read the PMTiles v3 header for status reporting. Never loads the tile data."""
+    import struct
+
+    p = path if path is not None else MAP_PMTILES_PATH
+    try:
+        size = p.stat().st_size
+        with open(p, "rb") as f:
+            header = f.read(127)
+        if len(header) < 127 or header[:7] != b"PMTiles":
+            return None
+        version = header[7]
+        # v3 header: offsets/sizes are little-endian uint64; zoom bounds are uint8
+        min_zoom = header[100]
+        max_zoom = header[101]
+        min_lon = struct.unpack_from("<i", header, 102)[0] / 1e7
+        min_lat = struct.unpack_from("<i", header, 106)[0] / 1e7
+        max_lon = struct.unpack_from("<i", header, 110)[0] / 1e7
+        max_lat = struct.unpack_from("<i", header, 114)[0] / 1e7
+        center_zoom = header[118]
+        center_lng = struct.unpack_from("<i", header, 119)[0] / 1e7
+        center_lat = struct.unpack_from("<i", header, 123)[0] / 1e7
+        bounds = (
+            min_lon,
+            min_lat,
+            max_lon,
+            max_lat,
+        )  # west, south, east, north
+        return {
+            "version": version,
+            "size_bytes": size,
+            "min_zoom": min_zoom,
+            "max_zoom": max_zoom,
+            "center": {"lat": center_lat, "lng": center_lng, "zoom": center_zoom},
+            "bounds": list(bounds),
+        }
+    except Exception:
+        return None
+
+
+def _effective_pmtiles() -> tuple[Path, dict[str, Any] | None, str]:
+    """Pick the archive to serve: the Maragondon high-zoom archive (z0–17) when present and
+    valid, otherwise the nationwide z0–15 archive. Never modifies either file."""
+    try:
+        if MAP_PMTILES_HQ_PATH.is_file() and MAP_PMTILES_HQ_PATH.stat().st_size > 0:
+            h = _pmtiles_header(MAP_PMTILES_HQ_PATH)
+            if h is not None:
+                return MAP_PMTILES_HQ_PATH, h, "highzoom"
+    except Exception:
+        pass
+    return MAP_PMTILES_PATH, _pmtiles_header(MAP_PMTILES_PATH), "nationwide"
+
+
 def _offline_map_info() -> dict[str, Any]:
-    import sqlite3
-    mb = MAP_MBTILES_PATH.exists() and MAP_MBTILES_PATH.is_file()
-    tiles_dir_has_files = False
-    if MAP_TILES_DIR.exists() and MAP_TILES_DIR.is_dir():
-        try:
-            # consider ready if at least one tile-like file exists
-            for p in MAP_TILES_DIR.rglob('*'):
-                if p.is_file() and p.suffix.lower() in ('.png', '.jpg', '.jpeg', '.webp', '.pbf'):
-                    tiles_dir_has_files = True
-                    break
-        except Exception:
-            tiles_dir_has_files = False
-    fmt = 'mbtiles' if mb else ('xyz' if tiles_dir_has_files else 'none')
-    bounds = None
-    center = None
-    minzoom = MAP_MIN_ZOOM
-    maxzoom = MAP_MAX_ZOOM
-    name = None
-    if mb:
-        try:
-            con = sqlite3.connect(str(MAP_MBTILES_PATH))
-            cur = con.cursor()
-            try:
-                cur.execute('SELECT name, value FROM metadata')
-                meta = {k: v for k, v in cur.fetchall()}
-                name = meta.get('name')
-                if meta.get('minzoom') is not None:
-                    minzoom = int(meta['minzoom'])
-                if meta.get('maxzoom') is not None:
-                    maxzoom = int(meta['maxzoom'])
-                if meta.get('bounds'):
-                    parts = [float(x) for x in str(meta['bounds']).split(',')]
-                    if len(parts) == 4:
-                        bounds = parts  # west,south,east,north
-                if meta.get('center'):
-                    parts = [float(x) for x in str(meta['center']).split(',')]
-                    if len(parts) >= 2:
-                        center = {'lng': parts[0], 'lat': parts[1], 'zoom': parts[2] if len(parts) > 2 else MAP_DEFAULT_ZOOM}
-            finally:
-                con.close()
-        except Exception:
-            pass
-    ready = fmt != 'none'
+    pmtiles_path, header, map_source = _effective_pmtiles()  # HQ preferred, nationwide fallback
+    ready = header is not None
+    zoom_available = header is not None
     return {
-        'ready': ready,
-        'format': fmt,
-        'tiles_dir': str(MAP_TILES_DIR),
-        'mbtiles_path': str(MAP_MBTILES_PATH),
-        'tile_url': '/api/map/tiles/{z}/{x}/{y}.png',
-        'attribution': MAP_ATTRIBUTION,
-        'min_zoom': minzoom,
-        'max_zoom': maxzoom,
-        'default_zoom': MAP_DEFAULT_ZOOM,
-        'default_center': (center or {'lat': MAP_DEFAULT_LAT, 'lng': MAP_DEFAULT_LNG, 'zoom': MAP_DEFAULT_ZOOM}),
-        'bounds': bounds,
-        'name': name,
-        'satellite_available': False,
-        'offline_only': True,
+        "ready": ready,
+        "format": "pmtiles" if ready else "none",
+        "pmtiles_path": str(pmtiles_path),
+        "map_source": map_source if zoom_available else "none",
+        "highzoom_available": map_source == "highzoom",
+        "pmtiles_url": "/api/map/aeris.pmtiles",
+        "style_url": "/api/map/style.json",
+        "glyphs_url": "/api/map/fonts/{fontstack}/{range}.pbf",
+        "attribution": MAP_ATTRIBUTION,
+        "min_zoom": header["min_zoom"] if zoom_available else MAP_MIN_ZOOM,
+        "max_zoom": header["max_zoom"] if zoom_available else MAP_MAX_ZOOM,
+        "default_zoom": MAP_DEFAULT_ZOOM,
+        "default_center": {
+            "lat": MAP_DEFAULT_LAT,
+            "lng": MAP_DEFAULT_LNG,
+            "zoom": MAP_DEFAULT_ZOOM,
+        },
+        "bounds": header["bounds"] if zoom_available else None,  # west,south,east,north
+        "size_bytes": header["size_bytes"] if zoom_available else None,
+        "name": "AERIS offline vector tile archive (OpenStreetMap)",
+        "satellite_available": False,
+        "offline_only": True,
     }
 
 
-@app.get('/api/map/status')
+@app.get("/api/map/status")
 async def api_map_status() -> dict[str, Any]:
     return _offline_map_info()
 
 
-@app.get('/api/map/tiles/{z}/{x}/{y}.{ext}')
-async def api_map_tile(z: int, x: int, y: int, ext: str):
-    # Serve locally stored street map tiles only. No online fallback.
-    if ext.lower() not in ('png', 'jpg', 'jpeg', 'webp', 'pbf'):
-        return JSONResponse({'error': 'unsupported_tile_format'}, status_code=404)
-    # basic sanity
-    if z < 0 or z > 30 or x < 0 or y < 0:
-        return JSONResponse({'error': 'invalid_tile'}, status_code=404)
+@app.get("/api/map/style.json")
+async def api_map_style():
+    # Single source of truth: the same style file the frontend build ships.
+    candidates = [
+        WEBSITE_DIR / "public" / "map" / "style.json",
+        WEBSITE_DIR / "dist" / "map" / "style.json",
+    ]
+    for p in candidates:
+        if p.exists() and p.is_file():
+            return FileResponse(str(p), media_type="application/json", headers={"Cache-Control": "no-cache"})
+    return JSONResponse({"error": "style_not_found"}, status_code=404)
 
-    # 1) XYZ tile directory
-    base = MAP_TILES_DIR
-    if base.exists() and base.is_dir():
-        # try requested ext and common alternatives
-        candidates = [base / str(z) / str(x) / f"{y}.{ext.lower()}"]
-        for alt in ('png', 'jpg', 'jpeg', 'webp'):
-            p = base / str(z) / str(x) / f"{y}.{alt}"
-            if p not in candidates:
-                candidates.append(p)
-        for p in candidates:
-            try:
-                rp = p.resolve()
-                if str(rp).startswith(str(base.resolve())) and rp.is_file():
-                    mt = 'image/png'
-                    suf = rp.suffix.lower()
-                    if suf in ('.jpg', '.jpeg'):
-                        mt = 'image/jpeg'
-                    elif suf == '.webp':
-                        mt = 'image/webp'
-                    elif suf == '.pbf':
-                        mt = 'application/x-protobuf'
-                    headers = {'Cache-Control': 'public, max-age=86400'}
-                    return FileResponse(str(rp), media_type=mt, headers=headers)
-            except Exception:
-                pass
 
-    # 2) MBTiles (TMS y flip)
-    if MAP_MBTILES_PATH.exists() and MAP_MBTILES_PATH.is_file():
-        try:
-            import sqlite3
-            tms_y = (2 ** z - 1) - y
-            con = sqlite3.connect(str(MAP_MBTILES_PATH))
-            try:
-                cur = con.cursor()
-                cur.execute(
-                    'SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=? LIMIT 1',
-                    (z, x, tms_y),
-                )
-                row = cur.fetchone()
-            finally:
-                con.close()
-            if row and row[0] is not None:
-                data = row[0]
-                mt = 'image/png'
-                if isinstance(data, (bytes, bytearray)) and len(data) >= 3 and data[:3] == b'\xff\xd8\xff':
-                    mt = 'image/jpeg'
-                return Response(content=bytes(data), media_type=mt, headers={'Cache-Control': 'public, max-age=86400'})
-        except Exception:
-            pass
+_RANGE_RE = __import__("re").compile(r"bytes=(\d*)-(\d*)")
 
-    # No tile available locally (outside coverage or map data missing) - return 404, never fetch online
-    return JSONResponse({'error': 'tile_not_found', 'offline': True}, status_code=404)
+
+@app.get("/api/map/aeris.pmtiles")
+async def api_map_pmtiles(request: Request):
+    """Stream the effective PMTiles archive with HTTP Range support (required by the pmtiles protocol)."""
+    p = _effective_pmtiles()[0]
+    if not p.exists() or not p.is_file() or p.stat().st_size == 0:
+        return JSONResponse({"error": "pmtiles_not_found"}, status_code=404)
+
+    size = p.stat().st_size
+    base_headers = {
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "public, max-age=86400",
+        "Content-Type": "application/vnd.pmtiles",
+    }
+
+    range_header = request.headers.get("range")
+    start, end = 0, size - 1
+    partial = False
+    if range_header:
+        m = _RANGE_RE.match(range_header.strip())
+        if m:
+            a, b = m.group(1), m.group(2)
+            if a == "" and b != "":  # suffix range: last N bytes
+                n = int(b)
+                start = max(size - n, 0)
+                end = size - 1
+            else:
+                start = int(a) if a else 0
+                end = int(b) if b else size - 1
+            start = max(start, 0)
+            end = min(end, size - 1)
+            if start > end:
+                return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+            partial = True
+
+    length = end - start + 1
+
+    def iterfile(chunk: int = 1024 * 512):
+        with open(p, "rb") as f:
+            f.seek(start)
+            remaining = length
+            while remaining > 0:
+                data = f.read(min(chunk, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    headers = {**base_headers, "Content-Length": str(length)}
+    if partial:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        return StreamingResponse(iterfile(), status_code=206, media_type="application/vnd.pmtiles", headers=headers)
+    return StreamingResponse(iterfile(), status_code=200, media_type="application/vnd.pmtiles", headers=headers)
+
+
+_FONT_RANGE_RE = __import__("re").compile(r"^(\d+)-(\d+)\.pbf$")
+
+
+@app.get("/api/map/fonts/{fontstack:path}/{range_name}")
+async def api_map_font(fontstack: str, range_name: str):
+    base = MAP_FONTS_DIR.resolve()
+    try:
+        stack_dir = (base / fontstack).resolve()
+    except Exception:
+        return JSONResponse({"error": "invalid_fontstack"}, status_code=400)
+    if stack_dir == base or base not in stack_dir.parents:
+        # fontstack must stay inside fonts dir; also forbid nested weird paths beyond one level
+        return JSONResponse({"error": "invalid_fontstack"}, status_code=400)
+    if not _FONT_RANGE_RE.match(range_name):
+        return JSONResponse({"error": "invalid_range"}, status_code=400)
+    font_file = stack_dir / range_name
+    if not font_file.is_file():
+        return JSONResponse({"error": "glyph_not_found"}, status_code=404)
+    return FileResponse(
+        str(font_file),
+        media_type="application/x-protobuf",
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
+    )
+
 
 
 

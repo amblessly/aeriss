@@ -77,21 +77,34 @@ DEFAULT_LAT = os.getenv("AERIS_DEFAULT_LAT")
 DEFAULT_LNG = os.getenv("AERIS_DEFAULT_LNG")
 DEFAULT_ALTITUDE_M = os.getenv("AERIS_DEFAULT_ALTITUDE_M")
 
-# Offline street map (locally hosted tiles only; no online fallback)
-# Provide either an MBTiles file (recommended for single-file deployment) or an XYZ tile directory:
-#   <AERIS_MAP_TILES_DIR>/{z}/{x}/{y}.png (or .jpg/.webp)
+# Offline street map (PMTiles + MapLibre GL JS; locally hosted only; no online fallback)
+# Map data lives in DATA_DIR/maps (gitignored runtime data):
+#   aeris.pmtiles                 vector tile archive (OpenStreetMap-derived; see data/maps/README.md)
+#   fonts/{fontstack}/{range}.pbf local glyph PBFs used by the MapLibre style
 MAP_DATA_DIR = Path(os.getenv("AERIS_MAP_DATA_DIR", str(DATA_DIR / "maps")))
-MAP_TILES_DIR = Path(os.getenv("AERIS_MAP_TILES_DIR", str(MAP_DATA_DIR / "tiles")))
-MAP_MBTILES_PATH = Path(os.getenv("AERIS_MAP_MBTILES_PATH", str(MAP_DATA_DIR / "streets.mbtiles")))
+MAP_PMTILES_PATH = Path(os.getenv("AERIS_MAP_PMTILES_PATH", str(MAP_DATA_DIR / "aeris.pmtiles")))
+# High-zoom operational-area archive (z0–17, Maragondon/Cavite bbox). Served in preference
+# to the nationwide z0–15 archive when present and valid. The nationwide archive is never modified.
+MAP_PMTILES_HQ_PATH = Path(os.getenv("AERIS_MAP_PMTILES_HQ_PATH", str(MAP_DATA_DIR / "aeris-hq.pmtiles")))
+MAP_FONTS_DIR = Path(os.getenv("AERIS_MAP_FONTS_DIR", str(MAP_DATA_DIR / "fonts")))
 MAP_ATTRIBUTION = os.getenv(
     "AERIS_MAP_ATTRIBUTION",
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    '© <a href="https://www.openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 )
 MAP_MIN_ZOOM = int(os.getenv("AERIS_MAP_MIN_ZOOM", "0"))
-MAP_MAX_ZOOM = int(os.getenv("AERIS_MAP_MAX_ZOOM", "19"))
-MAP_DEFAULT_ZOOM = int(os.getenv("AERIS_MAP_DEFAULT_ZOOM", "16"))
-MAP_DEFAULT_LAT = float(os.getenv("AERIS_MAP_DEFAULT_LAT", "0"))
-MAP_DEFAULT_LNG = float(os.getenv("AERIS_MAP_DEFAULT_LNG", "0"))
+MAP_MAX_ZOOM = int(os.getenv("AERIS_MAP_MAX_ZOOM", "15"))
+MAP_DEFAULT_ZOOM = int(os.getenv("AERIS_MAP_DEFAULT_ZOOM", "13"))
+# Operational area default: Maragondon, Cavite, Philippines
+MAP_DEFAULT_LAT = float(os.getenv("AERIS_MAP_DEFAULT_LAT", "14.3045"))
+MAP_DEFAULT_LNG = float(os.getenv("AERIS_MAP_DEFAULT_LNG", "120.7408"))
+
+# Optional local GNSS (USB/serial GPS/gnss receiver, NMEA 0183) — genuine satellite
+# positioning with no internet dependency. No hardware => service reports unavailable.
+# AERIS_GPS_ENABLED=auto|off|on, AERIS_GPS_PORT=/dev/ttyUSB0, AERIS_GPS_BAUD=9600
+GPS_ENABLED = os.getenv("AERIS_GPS_ENABLED", "auto")
+GPS_PORT = os.getenv("AERIS_GPS_PORT", "")
+GPS_BAUD = int(os.getenv("AERIS_GPS_BAUD", "9600"))
+GPS_FRESH_S = float(os.getenv("AERIS_GPS_FRESH_S", "10"))
 
 # Optional HTTPS for secure-context browser geolocation over LAN (recommended for laptop access)
 SSL_CERTFILE = os.getenv("AERIS_SSL_CERTFILE")
