@@ -142,7 +142,144 @@ These paths are separate: **LoRa is not required for laptop access to the locall
 - Place offline map data on the Pi (`data/maps/aeris-hq.pmtiles` for the Maragondon z0–16 operational area, optionally `data/maps/aeris.pmtiles` as nationwide z0–15 fallback, + `data/maps/fonts/…`) (see `data/maps/README.md`).
 - (Recommended for geolocation) configure HTTPS cert/key and start with SSL env vars set; trust cert on client laptop and access via `https://<pi-ip>:5000`.
 - Start backend: `python -m app.main` (or systemd via `scripts/install_services.sh`), bind as configured (`AERIS_HOST`/`AERIS_PORT`).
-- Laptop access: connect to AERIS hotspot/network, open dashboard URL (HTTP for UI access where available; **HTTPS/secure context required for browser geolocation**), start location tracking, allow permission. 
+- Laptop access: connect to AERIS hotspot/network, open dashboard URL (HTTP for UI access where available; **HTTPS/secure context required for browser geolocation**), start location tracking, allow permission.
+
+## 🛠️ Setup Guide
+A beginner-friendly guide to get the AERIS system running from scratch.
+
+### Requirements
+- **Software:** Python 3.9+, Node.js (v18+), Git
+- **Hardware (Raspberry Pi 4B target):** Raspberry Pi 4B, MLX90640 thermal camera (optional), LoRa 02 radio (optional), micro-SD card, stable power supply
+- **For laptop development:** A laptop/desktop with a browser (Chrome, Firefox, Edge)
+
+### Step 1: Get the project
+```bash
+cd /path/to/your/projects
+git clone https://github.com/your-aeris-project/aeris-project.git
+cd aeris-project
+```
+
+### Step 2: Set up Python environment
+```bash
+python3 -m venv .venv
+source .venv/bin/activate  # Linux/macOS: .venv\Scripts\activate on Windows
+```
+
+### Step 3: Install Python dependencies
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+# Optional hardware libraries (install on Raspberry Pi as needed):
+# pip install adafruit-circuitpython-mlx90640 adafruit-blinka smbus2
+# pip install spidev RPi.GPIO
+# pip install pyserial>=3.5  # for USB GPS receiver
+```
+
+### Step 4: Build the website (React + Vite)
+```bash
+cd website
+npm ci
+npm run build
+cd ..
+```
+*This creates `website/dist/` which the Python backend serves automatically.*
+
+### Step 5: Configure environment variables
+```bash
+cp config/aeris-groundstation.env.example .env
+# Edit .env with your preferred editor (nano, code, notepad)
+```
+**Key variables you can set:**
+| Variable | Default | Description |
+|---|---|---|
+| `AERIS_HOST` | `0.0.0.0` | Server bind address |
+| `AERIS_PORT` | `5000` | Server port (dashboard URL uses this) |
+| `AERIS_HOTSPOT_SSID` | `aeris-groundstation` | Wi-Fi hotspot name (Pi only) |
+| `AERIS_HOTSPOT_PASSWORD` | `pi12345678` | Wi-Fi hotspot password (Pi only) |
+| `AERIS_MLX90640_I2C_BUS` | `1` | I2C bus number (Pi only) |
+| `AERIS_MAP_PMTILES_HQ_PATH` | `data/maps/aeris-hq.pmtiles` | High-zoom map archive path |
+
+> **Important:** Do not share `.env` publicly. For Pi deployment, move the Wi-Fi password to a protected file (see Step 6).
+
+### Step 6: (Pi only) Protect credentials on deployment
+```bash
+# On the Raspberry Pi only (not the development laptop):
+sudo mkdir -p /etc/aeris
+sudo cp config/aeris-groundstation.env.example /etc/aeris/aeris.env
+sudo chown root:root /etc/aeris/aeris.env
+sudo chmod 600 /etc/aeris/aeris.env
+```
+This moves the config to a root-owned, permission-restricted file.
+
+### Step 7: Run the application
+```bash
+source .venv/bin/activate
+python -m app.main
+# Or: uvicorn app.dashboard.routes:app --host 0.0.0.0 --port 5000
+```
+
+### Step 8: Access the dashboard from a browser
+- **Development mode (laptop):** `http://localhost:5000` or `http://127.0.0.1:5000`
+- **Raspberry Pi hotspot mode:** `http://192.168.4.1:5000`
+
+> **For browser geolocation:** Accessing via `http://192.168.4.1:5000` (Pi hotspot IP) blocks geolocation in browsers. Use HTTPS as described below or access via `http://localhost:5000` on the Pi's own screen.
+
+### 🔧 HTTPS for Secure Browser Geolocation
+**Why?** Browsers block geolocation on plain HTTP when accessed from another device. If you're on the Pi's hotspot and accessing `http://192.168.4.1:5000`, geolocation won't work.
+
+**Quick solution:**
+1. Generate a local certificate:
+   ```bash
+   bash scripts/generate_local_https_cert.sh config/certs 192.168.4.1 825
+   ```
+2. Start the server with SSL:
+   ```bash
+   AERIS_SSL_CERTFILE=config/certs/aeris-local.cert.pem \
+   AERIS_SSL_KEYFILE=config/certs/aeris-local.key.pem \
+   python -m app.main
+   ```
+3. Trust the certificate in your browser:
+   - Visit `https://192.168.4.1:5000`
+   - Click the padlock → "Connection is not private" → "Advanced" → "Proceed anyway"
+   - Go to "Certificate information" → "Certificate" → "Import" → "Trust this certificate"
+
+**Robust solution:** Use `mkcert` to create a local CA, install it on each laptop, and then `https://192.168.4.1:5000` works without warnings.
+
+### 🛑 How to Stop the Application
+- **Foreground mode:** Press `Ctrl+C` in the terminal where the server is running
+- **Background mode:** Find the process ID and kill it:
+  ```bash
+  ps aux | grep "uvicorn\|app.main"
+  kill <PID>
+  # Or on Pi with systemd:
+  sudo systemctl stop aeris
+```
+
+### 🐛 Troubleshooting
+| Problem | Solution |
+|---|---|
+| `ModuleNotFoundError` | Activate virtual environment `(.venv)` and install dependencies with `pip install -r requirements.txt` |
+| `npm: command not found` | Install Node.js from https://nodejs.org/ |
+| `build failed` in website | Try `npm install` instead of `npm ci`, or check Node.js version is v18+ |
+| Dashboard shows "website not built" | Run `cd website && npm run build` |
+| `Connection refused` at `http://localhost:5000` | Make sure the server is running |
+| Browser geolocation blocked | Access via `http://localhost:5000` or set up HTTPS |
+| MLX90640 sensor not found | Enable I2C on Pi (`sudo raspi-config -> Interface Options -> I2C`), check wiring |
+| LoRa transmission fails | Verify SPI enabled, check pin connections (NSS, RESET, DIO0), confirm frequency/parameters |
+| Can't connect to Pi hotspot | Hotspot SSID: `aeris-groundstation`, password: `pi12345678` |
+| Map tiles returning 404 | Ensure map data files exist: `data/maps/aeris.pmtiles` and/or `data/maps/aeris-hq.pmtiles` |
+
+### 📦 Default Summary
+| Item | Value |
+|---|---|
+| **Server bind address** | `0.0.0.0` |
+| **Server port** | `5000` |
+| **Dashboard URL (dev)** | `http://localhost:5000` |
+| **Dashboard URL (Pi hotspot)** | `http://192.168.4.1:5000` |
+| **Default Wi-Fi SSID** | `aeris-groundstation` |
+| **Default Wi-Fi password** | `pi12345678` |
+| **Default map center** | Maragondon, Cavite, Philippines (lat: 14.3045, lng: 120.7408) |
+| **Default map zoom** | 13 | 
 
 ## MLX90640 real thermal integration (implementation)
 
